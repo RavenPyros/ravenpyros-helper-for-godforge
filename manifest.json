@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "RavenPyros Helper for Godforge",
-  "version": "2.1.0",
-  "description": "Godforge Duels companion by RavenPyros: free-reward tracker, daily login reminder and links for your Godforge reward picks.",
+  "version": "2.3.0",
+  "description": "Unofficial Godforge Duels companion by RavenPyros: reward tracker, login reminder, open duel rooms and deck import.",
   "permissions": [
     "storage",
     "alarms"
@@ -16,7 +16,7 @@
   "content_scripts": [
     {
       "matches": ["https://godforge.gg/*"],
-      "js": ["duels.js", "rewards.js", "rooms.js"],
+      "js": ["duels.js", "rewards.js", "rooms.js", "armory.js"],
       "run_at": "document_idle"
     }
   ],

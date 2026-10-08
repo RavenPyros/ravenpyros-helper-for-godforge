@@ -6,8 +6,9 @@
 // closed) it removes the listing, so every code on the list still works. Only the room code and your
 // optional note are sent, and only after you click List.
 //
-// Joining: while the "Join a room" code box is on screen, the panel shows the open rooms with a
-// Copy button for each code, so you can join without leaving Duels.
+// Joining: while the "Join a room" code box is on screen, the panel (bottom-left, clear of the
+// duels.js button) shows the open rooms with a Copy button for each code. duels.js also shows the
+// count on its button and the list in its panel on every Duels page.
 //
 // Read-only on godforge.gg: it reads the page and never clicks, types, creates rooms or plays.
 //
@@ -85,6 +86,7 @@
                 message = {
                     already_listed: 'This room is already listed.',
                     rate_limited: 'Too many rooms listed from here. Try again later.',
+                    busy: 'Too many rooms are open right now. Try again in a few minutes.',
                     invalid_code: 'That room code does not look right.',
                 }[data.error] || 'Could not list the room. Try again.';
             }
@@ -216,6 +218,7 @@
         .head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #262c45; }
         .head img { width: 20px; height: 20px; }
         .head b { color: #ffb200; flex: 1; font-size: 13px; }
+        .wrap.left { right: auto; left: 16px; }
         .body { padding: 10px 12px; }
         .code { font: 700 18px/1 ui-monospace, Consolas, monospace; letter-spacing: .15em; color: #ffb200; }
         input { box-sizing: border-box; width: 100%; margin: 8px 0; padding: 6px 8px; border-radius: 6px; border: 1px solid #3a4160; background: #070b1e; color: #e8e8ee; font: inherit; }
@@ -291,7 +294,7 @@
                 if (e.key === 'Enter' && e.target.matches('[data-note]')) list();
             });
         }
-        host.shadowRoot.innerHTML = `<style>${CSS}</style><div class="wrap">
+        host.shadowRoot.innerHTML = `<style>${CSS}</style><div class="wrap${hosting ? '' : ' left'}">
             <div class="head"><img src="${ICON}" alt=""><b>RavenPyros &middot; Open rooms</b></div>
             <div class="body">${hosting ? bodyHtml() : joinHtml()}</div></div>`;
     }
@@ -309,6 +312,9 @@
         enabled = changes.rp_rooms.newValue !== false;
         if (!enabled) unlist('left');
         code = null;
+        state = 'idle';
+        message = '';
+        render();
         check();
     });
 

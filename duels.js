@@ -3,8 +3,12 @@
 // - Reward panel: free hero / weapon / imprint progress with deadline maths, today's quests, and
 //   anything waiting to be claimed. Read-only: it reads the same /api/duels/bootstrap the game
 //   loads, only while a Duels page is open, and never clicks or plays anything.
+// - Open duel rooms: the button shows how many Duel a Friend rooms are listed on ravenpyros.com, and
+//   the panel lists them with a Copy button, so you can tell whether to join or host before you pick.
+//   Checks every 30 s while a Duels tab is visible (10 s while the panel is open); those requests
+//   send nothing about you. Listing your own room is rooms.js.
 //
-// Setting (chrome.storage.local, set from the popup): rp_duels_panel.
+// Settings (chrome.storage.local, set from the popup): rp_duels_panel, rp_rooms.
 
 (() => {
     const SITE = 'https://www.ravenpyros.com';
@@ -19,7 +23,12 @@
 
     // The panel starts minimised to a button (red dot when something needs doing), so it never
     // covers the game until you open it.
-    const settings = { rp_duels_panel: true, rp_duels_panel_open: false };
+    const settings = { rp_duels_panel: true, rp_duels_panel_open: false, rp_rooms: true };
+    const ROOMS_API = `${SITE}/api/duels/v1/rooms`;
+    let rooms = null;         // open rooms (when the panel has loaded the list)
+    let roomCount = null;     // number of open rooms, null until known
+    let roomsFetched = 0;
+    let copiedCode = null;
     let data = null;          // last bootstrap response
     let picked = {};          // kind -> true/false from /profile/rewards; missing = unknown
     let loadError = null;     // 'login' | 'network' | null
@@ -142,6 +151,61 @@
         return `${left} to go &middot; about ${games} game${games > 1 ? 's' : ''} &middot; ${tip}`;
     }
 
+    // ---------- open duel rooms ----------
+
+    // Panel open: the full list every 10 s. Closed: just the count for the button, every 30 s.
+    async function loadRooms(force = false) {
+        if (!settings.rp_rooms || !settings.rp_duels_panel || !isDuels() || inMatch() || document.hidden) return;
+        const wait = settings.rp_duels_panel_open ? 10000 : 30000;
+        if (!force && Date.now() - roomsFetched < wait - 500) return;
+        roomsFetched = Date.now();
+        try {
+            const res = await fetch(settings.rp_duels_panel_open ? ROOMS_API : `${ROOMS_API}/count`, { credentials: 'omit', cache: 'no-store' });
+            if (!res.ok) return;
+            const body = await res.json();
+            if (Array.isArray(body.rooms)) { rooms = body.rooms; roomCount = body.rooms.length; } else { roomCount = body.open | 0; }
+            render();
+        } catch (e) { /* keep the last answer */ }
+    }
+
+    const ago = (iso) => {
+        const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+        return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`;
+    };
+
+    function roomsHtml() {
+        if (!settings.rp_rooms) return '';
+        const all = `<a href="${SITE}/godforge-duels/rooms" target="_blank" rel="noopener">All open rooms</a>`;
+        if (rooms === null) return `<div class="sec"><div class="t"><span>Open duel rooms</span></div><div class="muted">Loading&hellip;</div></div>`;
+        if (!rooms.length) {
+            return `<div class="sec"><div class="t"><span>Open duel rooms</span><span>0</span></div>
+                <div class="s">No one is waiting right now. Host one: <b>Duel a Friend &rsaquo; Create a room</b>, then click <b>List this room</b> so others can find you.</div></div>`;
+        }
+        const rows = rooms.slice(0, 6).map((r) => `<div class="room">
+                <span class="code">${esc(r.code)}</span>
+                <span class="info">${r.note ? `<b>${esc(r.note)}</b>` : ''}${esc(ago(r.created_at))}</span>
+                <button class="${copiedCode === r.code ? 'ghost' : 'primary'}" data-act="copy" data-code="${esc(r.code)}">${copiedCode === r.code ? 'Copied' : 'Copy'}</button>
+            </div>`).join('');
+        return `<div class="sec"><div class="t"><span>Open duel rooms</span><span>${rooms.length}</span></div>${rows}
+            <div class="s" style="margin-top:6px">Copy a code, then <b>Duel a Friend &rsaquo; Join a room</b> and paste it. ${rooms.length > 6 ? all : ''}</div></div>`;
+    }
+
+    async function copyCode(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (e) {                               // clipboard API refused (focus): old-style copy
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0';
+            host.shadowRoot.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+        }
+        copiedCode = text;
+        render();
+    }
+
     // ---------- panel ----------
 
     const CSS = `
@@ -171,6 +235,16 @@
         li { margin: 2px 0; }
         .foot { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; }
         .muted { color: #9aa0b8; font-size: 12px; }
+        .fab .count { position: absolute; bottom: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
+            border-radius: 9px; background: #ffb200; color: #0b1024; font: 700 11px/14px system-ui, sans-serif; text-align: center; border: 2px solid #0b1024; }
+        .room { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid #262c45; }
+        .room:first-of-type { border-top: 0; }
+        .room .code { font: 700 15px/1 ui-monospace, Consolas, monospace; letter-spacing: .12em; color: #ffb200; }
+        .room .info { flex: 1; min-width: 0; font-size: 12px; color: #b7bccf; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .room .info b { color: #e8e8ee; font-weight: 600; margin-right: 4px; }
+        .room button { font: inherit; font-size: 12px; font-weight: 600; border-radius: 6px; padding: 3px 9px; cursor: pointer; border: 1px solid #ffb200; }
+        .room .primary { background: #ffb200; color: #0b1024; }
+        .room .ghost { background: none; color: #ffb200; }
     `;
 
     function ensureHost() {
@@ -182,11 +256,12 @@
         host.shadowRoot.addEventListener('click', (e) => {
             const t = e.target.closest('[data-act]');
             if (!t) return;
+            if (t.dataset.act === 'copy') { copyCode(t.dataset.code); return; }
             const open = t.dataset.act === 'open';
             settings.rp_duels_panel_open = open;
             chrome.storage.local.set({ rp_duels_panel_open: open });
             render();
-            if (open) refresh(true);
+            if (open) { refresh(true); loadRooms(true); }
         });
         return host;
     }
@@ -196,8 +271,8 @@
     }
 
     function panelHtml() {
-        if (loadError === 'login') return `<div class="sec muted">Log in to Godforge to see your Duels progress.</div>`;
-        if (!data) return `<div class="sec muted">${loadError ? 'Could not load your Duels progress.' : 'Loading&hellip;'}</div>`;
+        if (loadError === 'login') return `${roomsHtml()}<div class="sec muted">Log in to Godforge to see your Duels progress.</div>`;
+        if (!data) return `${roomsHtml()}<div class="sec muted">${loadError ? 'Could not load your Duels progress.' : 'Loading&hellip;'}</div>`;
 
         const today = data.serverDayIndex ?? dayIndexNow();
         const daysLeft = Math.max(0, END_DAY - today);
@@ -217,7 +292,7 @@
             ? `<ul>${todo.map(([label, href]) => `<li><a href="${href}">${esc(label)}</a></li>`).join('')}</ul>`
             : `<div class="muted">Nothing waiting. &#10003;</div>`;
 
-        return `
+        return `${roomsHtml()}
             <div class="sec"><div class="t"><span>Free Godforge rewards</span><span>${daysLeft} day${daysLeft === 1 ? '' : 's'} left</span></div>${rows}</div>
             <div class="sec"><div class="t"><span>Today's quests ${qDone}/${quests.length}</span><span>reset in ${resetH}h</span></div><ul>${questList}</ul></div>
             <div class="sec"><div class="t"><span>Waiting to be claimed</span></div>${todoHtml}</div>
@@ -235,7 +310,12 @@
         const attention = data && (unclaimed().length > 0 || pickWaiting);
         root.innerHTML = `<style>${CSS}</style><div class="wrap">${settings.rp_duels_panel_open
             ? `<div class="panel"><div class="head"><img src="${ICON}" alt=""><b>RavenPyros &middot; Duels</b><button class="x" data-act="close" title="Minimise">&#8211;</button></div>${panelHtml()}</div>`
-            : `<button class="fab" data-act="open" title="RavenPyros Duels helper">${attention ? '<span class="dot"></span>' : ''}</button>`}</div>`;
+            : `<button class="fab" data-act="open" title="${esc(fabTitle())}">${attention ? '<span class="dot"></span>' : ''}${settings.rp_rooms && roomCount ? `<span class="count">${roomCount > 99 ? '99+' : roomCount}</span>` : ''}</button>`}</div>`;
+    }
+
+    function fabTitle() {
+        if (!settings.rp_rooms || roomCount === null) return 'RavenPyros Duels helper';
+        return roomCount ? `RavenPyros Duels helper: ${roomCount} open duel room${roomCount === 1 ? '' : 's'}` : 'RavenPyros Duels helper: no open duel rooms right now';
     }
 
     // ---------- loop ----------
@@ -245,6 +325,7 @@
             lastPath = location.pathname;
             render();
             refresh(true);
+            loadRooms(true);
         }
     }
 
@@ -253,7 +334,8 @@
         tick();
         setInterval(tick, 1500);
         setInterval(() => refresh(), 30000);
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+        setInterval(() => loadRooms(), 10000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); loadRooms(true); } });
     });
 
     chrome.storage.onChanged.addListener((changes, area) => {
@@ -261,7 +343,8 @@
         let touched = false;
         Object.keys(settings).forEach((k) => { if (changes[k]) { settings[k] = !!changes[k].newValue; touched = true; } });
         if (!touched) return;
+        if (changes.rp_rooms && !settings.rp_rooms) { rooms = null; roomCount = null; }
         render();
-        if (settings.rp_duels_panel) refresh(true);
+        if (settings.rp_duels_panel) { refresh(true); loadRooms(true); }
     });
 })();
